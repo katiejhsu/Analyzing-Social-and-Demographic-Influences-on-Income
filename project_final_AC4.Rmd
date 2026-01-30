@@ -1,0 +1,522 @@
+---
+title: "Analyzing Social and Demographic Influences on Income"
+subtitle: "Insights from the 2016 GSS Dataset"
+author: "Lily Yao, Katie Hsu, Qintong Zhang, Chloe Gao"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+```{r setup, include = FALSE}
+#load packages, read in your dataset if external to a package, 
+#and set global options. I have set all code chunks to not echo,
+#and to not print messages or warnings. . If you want to echo a particular code chunk to highlight something, you can do this individually for that code chunk.
+
+
+library(tidyverse)        #umbrella package
+library(janitor)          #for tables
+library(tidymodels)
+library(GGally)              #for scatterplot matrices
+library(skimr)               #for quick summary/overview
+library(ggridges)
+library(patchwork)         #attach this package
+
+knitr::opts_chunk$set( echo = FALSE,    
+                       message = FALSE,
+                       warning = FALSE)
+
+
+gss_subset <- read_csv(file = "final-data.txt",
+                       na = c(".d", ".i", ".j",".m",".n",".p",".q",".r",".s",".u",".x",".y",".z"))
+
+```
+
+
+
+## Introduction
+This project explores how various personal and social factors shape individual income, focusing on four key areas: childhood background, family composition, work factors, and occupational prestige. Prior research suggests that childhood socioeconomic status can influence adult earnings (Duncan & Magnuson), while gender expectations and caregiving responsibilities may limit women’s labor force participation and access to higher-paying jobs (Budig & England, 2001). Occupational measures such as prestige and socioeconomic index capture how job roles are valued and structured, affecting income outcomes (Bureau of Labor Statistics). Additionally, work factors like unemployment and education play critical roles, as both prolonged periods without work and lower education levels are associated with long-term income disadvantages (Arulampalam, 2001; Becker, 1964).
+
+### General Social Survey (GSS) Dataset
+Davern, Michael; Bautista, Rene; Freese, Jeremy; Herd, Pamela; and Morgan, Stephen L.; General Social Survey 1972-2024. [Machine-readable data file]. Principal Investigator, Michael Davern; Co-Principal Investigators, Rene Bautista, Jeremy Freese, Pamela Herd, and Stephen L. Morgan. Sponsored by National Science Foundation. NORC ed. Chicago: NORC, 2024: NORC at the University of Chicago [producer and distributor]. Data accessed from the Survey Documentation and Analysis archive at https://sda.berkeley.edu/sdaweb/analysis/?dataset=gss22rel2.
+
+**GSS Survey:**  The General Social Survey (GSS), conducted by NORC at the University of Chicago since 1972, is a nationally representative survey of U.S. adults. It collects data on social trends, opinions, and behaviors to inform public understanding and policy. 
+
+**Data Collection & Individuals:** Data is collected through in-person interviews (with telephone interviews when necessary), transitioning to computer-assisted interviews in 2002. The sample includes U.S. residents 18 and above living in non-institutional settings, selected through multistage area probability sampling to ensure representation across regions, demographics, and socioeconomic groups.
+
+**Dataset Filter:** We limited the dataset to 2016 to reduce confounding variables and avoid adjusting for inflation. As an election year, 2016 also presents a potentially influential context. Our selected variables reflect social, economic, and demographic factors likely to influence income. After removing missing data, the dataset includes 619 cases with 11 numeric (double) and categorical (character) variables.
+
+
+### Code Book
+
+| Variable          |  Description
+|:-----------|:--------------------------------
+| `conrinc`          | (Numeric) Individual respondent income in constant dollars adjusted to inflation. Values are continuous, ranging from 336 to 434,612.42 US dollars.
+| `sex`          | (Categorical) The biological sex of the respondent, Male and Female numbered 1 and 2, respectively.
+| `childs`          | (Numeric) Exact number of children the respondent has had (born alive, from any marriage). Values range from integers 0 to 8, representing 8 and above.
+| `unemp`          | (Categorical) The state of being unemployed any time in the last ten years for as long as a month, yes (1) or no (2).
+| `educ`          | (Numeric) Highest year of schooling finished and credited for ranging from 0 to 20 years.
+| `age`          | (Numeric) The age of each respondent. Values range from 18 to 89 and older.
+| `sei10`          | (Numeric) Socioeconomic Index of respondents represents the relative social status of their occupation, based on their educational attainment and income level. Values range from 9.0 to 92.8.
+| `prestg10`          | (Numeric) Occupational prestige score of respondents represents a subjective social status of each occupation, based on prestige and industry. Values range from 16 to 80.
+| `incom16`          | (Categorical) Respondent’s self comparison between their own family’s income to general American families being far below average (1), below average (2), average (3), above average (4), or far above average (5).
+| `pasei10`          | (Numeric) Respondent’s father’s occupation-based socioeconomic index score, a composite of income and education levels associated with occupation, mapped using the 2010 SEI scale. Values range from 9.0 to 93.7.
+| `masei10`          | (Numeric) Respondent’s mother’s occupation-based socioeconomic index score, a composite of income and education levels associated with occupation, mapped using the 2010 SEI scale. Values range from 9.0 to 92.8.
+
+### Response variable
+Our response variable in this project is the variable `conrinc`, the individual respondent's income in constant dollars adjusted to inflation. As shown in the histogram below, the distribution of this variable is unimodal, bell-shaped, and right-skewed.
+
+```{r filter_data}
+filtered <- gss_subset %>%
+  filter(if_all(c(conrinc, sex, educ, age, childs, unemp, sei10, prestg10, pasei10, masei10, incom16), ~ !is.na(.)))
+```
+
+```{r conrinc-hist, fig.height=3, fig.width=6, fig.align = "center"}
+binswidth1 <- 130000/log2(617)
+ggplot(data = filtered,
+       mapping = aes(x = conrinc)) +
+  geom_histogram(binwidth  = 14500) +
+  labs(title = "Distribution of respondent income in constant dollars",
+       subtitle = "Adjusted to inflation",
+       x = "Respondent income ($)",
+       y = "Frequency")
+```
+
+We recognize that our response variable is right-skewed, likely due to a small number of individuals reporting significantly higher incomes than the majority. This reflects a common societal pattern in which a relatively small upper class earns disproportionately high incomes. These outliers pull the distribution to the right, creating the skew, while most individuals earn near the median and do not contribute to the skewness.
+
+However, we chose not to apply a log transformation to the response variable or remove the outliers of the response variable, as we tried to apply these 2 changes on all the models, and we found these changes didn’t make an obvious difference in our results. Additionally, we believe interpreting model coefficients in terms of linear increases in income (rather than multiplicative changes) provides more intuitive and practical insights for our analysis.
+
+
+### Recoded variables
+
+`Sex`: (Categorical) The biological sex of the respondent, `Male` and `Female` numbered 1 and 2, respectively. We recoded it to Male and Female, making it clearer to use in coding. 
+
+`Children`: (Categorical) The number of children the respondent has had. Values are `No children` (if childs = 0), `1–2 children` (if childs = 1 or 2), and `3+ children` (if childs ≥ 3).
+
+`Incom16`: (Categorical) The responses for family income at 16 years. `Above Average` (`far above average` and `above average`), `Average`, and `Below Average`(`below average` and `far below average`). 
+
+## Section 2 - Model building
+
+Our dataset is split into an 80% training and 20% validation set. We will then build and propose models on the training split and evaluate the chosen model’s performance on the testing split.
+
+```{r mutate-sex-children-incom}
+# Mutate two new categorical columns:  sex & children
+filtered <- filtered %>%
+  mutate(Sex = ifelse(sex == 1, "Male", "Female")) %>%
+  mutate(children = ifelse(childs == 0, "0 child",
+                    ifelse(childs == 1 | childs == 2, "1-2 childs", "3+ childs")))
+filtered <- filtered %>%
+        mutate(Incom16 = ifelse(incom16 == 1 | incom16 == 2, "Below Average",
+                                       ifelse(incom16 == 4 | incom16 == 5, "Above Average", 
+                                              ifelse(incom16 == 3, "Average", NA )  )))
+```
+
+
+```{r split-data}
+set.seed(111)
+
+gss_subset_split <- initial_split(filtered, prop = 0.8)
+gss_subset_train <- training(gss_subset_split)
+gss_subset_test <- testing(gss_subset_split)
+```
+
+
+
+### Section 2.1 - Model proposed by Lily
+
+This model explores how traditional gender roles influence individual earnings, focusing on how caregiving responsibilities (captured by a recoded `children` variable) interact with `sex` to affect income. The model also includes `sei10`, a socioeconomic index, to control for occupational-based socioeconomic status and its relationship to earnings, which can further help explore whether caregiving responsibilities may limit women’s access to higher-status, better-paying occupations (Budig & England, 2001).
+
+The scatterplot and correlation (R = 0.425) show a moderate, positive linear relationship between socioeconomic index and income. This suggests that individuals in higher-SEI occupations tend to earn more.
+
+```{r sei10-scatter, fig.height=3, fig.width=5, fig.align = "center"}
+
+ggplot(data = gss_subset_train,
+       mapping = aes(x = sei10, y = conrinc)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(title = "Individual SEI score VS income",
+       x = "Socioeconomic index score",
+       y = "Income (dollars)")
+
+gss_subset_train %>%
+  summarize(R = cor(sei10, conrinc))
+
+```
+
+Recoding the numerical variable `childs` into the categorical variable `children` with three levels — 'No children', '1–2 children', and '3+ children' — allows clearer comparisons of income differences when caregiving responsibilities are absent, moderate, or likely more demanding.
+
+The boxplot below is plotted to compare the medians and the interquartile ranges because they are quite unaffected by the extreme values that caused the distribution of personal income to right skewed.
+
+```{r child-sex-boxplot, fig.height=3, fig.width=6,  fig.align = "center"}
+ggplot(data=gss_subset_train,
+       mapping=aes(x = children, 
+                   y = conrinc,
+                   fill = Sex))+
+  geom_boxplot() +
+  labs(title = "Differences in income by the respondents' sex",
+       subtitle = "Group by the number of children that the respondents have",
+       x = "Number of children",
+       y = "Income ($)")
+```
+
+Males consistently show higher median incomes than females across all child categories. Their interquartile ranges also span higher income values. The smallest gender income gap appears among respondents without children, suggesting that caregiving burden may intensify gender disparities in earnings.
+
+
+A linear regression model was then fitted to assess how income is influenced by socioeconomic status, caregiving, and sex. `sei10` is treated as a numerical predictor and main effect, while the categorical categories `children` and `Sex` are included with an interaction term to test whether caregiving's impact on income varies by gender.
+
+```{r model1-fit}
+model1 <- lm(conrinc ~ sei10 + children *  Sex, data = gss_subset_train)
+tidy(model1) %>% select(term, estimate)
+model1_rsq <- glance(model1) %>% 
+                    select(adj.r.squared) %>% pull()
+
+```
+
+Equation for the Linear Model:
+conrinc_hat = =−4422 + 650∗sei10 + 2986∗(1–2 children) + 1403∗(3+children) +2 143∗Male + 20485∗(1–2 children∗Male) + 10222∗(3+ children∗Male)
+
+```{r model1-rmse}
+model1_pred <- augment(model1, newdata  = gss_subset_test )
+model1.rmse <- model1_pred %>% 
+                 rmse(truth = conrinc, estimate = .fitted) %>% pull()
+```
+
+
+### Section 2.2 - Model proposed by Katie
+
+This model explores how unemployment status and educational attainment influence individual respondent income (conrinc). It focuses on including unemployment (unemp), a categorical variable indicating past unemployment, and education (educ), a numeric variable representing years of schooling, as key predictors of earnings. This aligns with research suggesting that "periods of unemployment can lead to long-term financial setbacks" (Arulampalam, 2001) and "higher levels of education often correlating with greater job opportunities and increased income" (Becker, 1964).
+
+The box plot below, which is part of explanatory modeling, of income by unemployment status shows a clear difference in median incomes between employed and unemployed individuals, which suggests that unemployment is a relevant factor influencing income and individuals who were employed in the last 10 years tend to make more compared to those who were unemployed in the last 10 years. There is considerable overlap in the interquartile ranges between employed and unemployed individuals, which suggests that unemp alone does not fully explain the variability in income, emphasizing the need for a model that accounts for additional factors (such as education) to predict individual earnings more comprehensively. 
+
+```{r unemployed-box-plot , fig.height=3, fig.width=5,  fig.align = "center"}
+# exploratory plot 1- shows us that employed has higher median income than unemployed
+filtered %>%
+  mutate(unemp_status = ifelse(unemp == 1, "Unemployed", "Employed")) %>%
+  ggplot(aes(x = unemp_status, y = conrinc)) +
+  geom_boxplot() +
+  labs(
+    title = "Income Distribution by Unemployment Status",
+    x = "Unemployment Status (Last 10 Years)",
+    y = "Individual Respondent Income (Dollars)"
+  )
+```
+
+The scatter plot and correlation (R=0.322) below, which is part of explanatory modeling, of income versus education level shows a moderate, positive linear relationship between education and income. This suggests that education also contributes to variations in individual income levels, and that individuals with higher years of schooling tend to earn more.
+
+A linear regression model was then fitted to assess how income is influenced by unemployment and education years. Education (educ) is treated as a numerical predictor and main effect(main effect meaning each factor is tested independently), while the categorical variable unemployment (unemp) is included as a main effect. This model was chosen because exploratory visualizations suggested a clear influence of both variables on income: unemployment status showed distinct median income differences in the box plot, and education level displayed a positive linear trend in the scatter plot.
+
+```{r education-scatter-plot, fig.height=3, fig.width=5,  fig.align = "center"}
+# exploratory plot 2- shows us that there is a positive relationship between education and income (eg: higher education = more income)
+filtered %>%
+  ggplot(aes(x = educ, y = conrinc)) +
+  geom_point() + 
+  geom_smooth(method = "lm") + 
+  labs(title = "Income vs. Education Level",
+       x = "Highest Year of Schooling Finished",
+       y = "Individual Respondent Income (Dollars)")
+
+gss_subset_train %>%
+  summarize(R = cor(educ, conrinc))
+
+```
+
+```{r model2-fit}
+model2 <- lm(conrinc ~ unemp + educ, data = gss_subset_train)
+tidy(model2)
+
+# adj r^2
+model2_rsq <- glance(model2) %>%
+  select(adj.r.squared) %>%
+  pull()
+```
+
+Equation for Linear Model: 
+conrinc_hat = -43309 + 9712⋅unemp + 4319⋅educ
+
+```{r model2-rmse}
+model2_pred <- augment(model2, newdata = gss_subset_test)
+rmse_model2 <- model2_pred %>%
+  rmse(truth = conrinc, estimate = .fitted) %>%
+  pull()
+
+```
+
+
+### Section 2.3 - Model proposed by Qintong
+
+This model investigates how occupational prestige score (`prestg10`, a numeric variable representing occupational prestige score), socioeconomic index (`sei10`, a numeric variable representing socioeconomic index) and gender (`Sex`, a categorical variable representing biological sex of the respondent) influence individual respondent income (`conrinc`). This aligns with research suggesting that "occupation is one of the most significant determinants of income levels" (Bureau of Labor Statistics).
+
+Bootstrapping was used to estimate confidence intervals for each explanatory variable to determine which one to include in the model.
+
+```{r prestg10-sei10-bootstrap, fig.height=3, fig.width=8,  fig.align = "center"}
+set.seed(111)
+
+boot_slope_p.df <- gss_subset_train %>%
+  specify(response = conrinc, 
+          explanatory = prestg10) %>%
+  generate(reps = 1000, type = "bootstrap") %>%
+  calculate(stat = "slope")
+
+boot_slope_p <- ggplot(data = boot_slope_p.df,
+       mapping = aes(x = stat)) + 
+  geom_histogram() +
+    labs(title = "Bootstrapped slope of prestg10",
+       x = "Slopes",
+       y = "Frequency")
+
+set.seed(111)
+
+boot_slope_s.df <- gss_subset_train %>%
+  specify(response = conrinc, 
+          explanatory = sei10) %>%
+  generate(reps = 1000, type = "bootstrap") %>%
+  calculate(stat = "slope")
+
+boot_slope_s <- ggplot(data = boot_slope_s.df,
+       mapping = aes(x = stat)) + 
+  geom_histogram() +
+    labs(title = "Bootstrapped slope of sei10",
+       x = "Slopes",
+       y = "Frequency")
+
+boot_slope_p + boot_slope_s
+```
+
+```{r sei10-prestg10-sum}
+
+boot_slope_p.df %>% 
+  summarise( prestg_lower = quantile(stat, 0.025), 
+             prestg_upper = quantile(stat, 0.975) )
+
+boot_slope_s.df %>% 
+  summarise( sei10_lower = quantile(stat, 0.025), 
+             sei10_upper = quantile(stat, 0.975) )
+```
+
+The interval estimate of the true effect of occupational prestige score is 681 to 1207, and that of the socioeconomic index is 555 to 849. It indicates that neither of them contains 0, so both of `prestg10` and `sei10` were kept in the modeling.
+
+The boxplot below is plotted to visually compare personal income by `Sex` and calculated the mean income for each gender group. Bootstrapping was also used to estimate the confidence interval of the mean difference between genders, providing further evidence that gender has a significant impact on personal income.
+
+```{r Sex-boxlot-mean_income_by_Sex, fig.height=3, fig.width=5,  fig.align = "center"}
+ggplot(data = gss_subset_train,
+       mapping = aes(x = conrinc,
+                     y = Sex)) +
+  geom_boxplot()+
+  labs(title = "Income Distribution by Gender",
+       x = "Individual Respondent Income ($)",
+       y = "Respondent Gender") 
+
+gss_subset_train %>%
+  group_by(Sex) %>%
+  summarise(mean_income = mean(conrinc))
+```
+
+Both the mean and median income of females are lower than those of males.
+
+```{r bootstrap-Sex, fig.height=3, fig.width=5,  fig.align = "center"}
+set.seed(111)
+
+boot_diff_means.df <- gss_subset_train %>% 
+                     specify( response = conrinc,     
+                              explanatory = Sex) %>% 
+                       generate(reps = 1000, 
+                                type = "bootstrap") %>% 
+                       calculate(stat = "diff in means", 
+                                order = c("Male", "Female"))
+   
+ggplot(data = boot_diff_means.df, 
+       mapping = aes(x = stat)) +
+  geom_histogram() +
+  labs(title = "Bootstrapped distribution of difference in mean income\n (Male - Female) for Sex",
+       x = "Difference in mean income (Male - Female)($)",
+       y = "Frequency")
+
+
+boot_diff_means.df %>%
+  summarise( lower = quantile(stat, 0.025), 
+             upper = quantile(stat, 0.975) )
+```
+
+The interval estimate for the true difference in income earned by male versus female is in the range $5806 to $17966. Since this provides some evidence that the true difference is positive (not zero), this variable was included in the model.
+
+```{r model3-fit}
+model3 <- lm(conrinc ~ prestg10 + sei10 + Sex, data = gss_subset_train)
+tidy(model3) %>% select(term, estimate)
+```
+
+Equation for the Linear Model:
+conrinc-hat = -5052 + 31.2 * prestg10 + 668 * sei10 + 11685 * SexMale
+
+```{r model3-rsq}
+model3_rsq <- glance(model3) %>% 
+                    select(adj.r.squared) %>% pull()
+```
+
+```{r model3-rmse}
+model3_pred <- augment(model3, newdata  = gss_subset_test )
+model3_rmse <- model3_pred %>% 
+                 rmse(truth = conrinc, estimate = .fitted) %>% pull()
+```
+
+### Section 2.4 - Model proposed by Chloe
+
+This model looks at how an individual’s childhood socioeconomic index (SEI) plays a role in their level of income. Childhood socioeconomic status, paired with childhood adversity, has been shown to have an effect on socioeconomic status going into adulthood (Suglia). In order to zoom in on the impact of childhood SEI on adult income, this model focuses on the effects of father’s socioeconomic index, `pasei10`, mother’s socioeconomic index, `masei10`, and family income at age 16, `incom16`, on the respondent income.
+
+In order to identify whether a relationship exists between a respondent's parents' socioeconomic index and their income, this model estimates a confidence interval between father's SEI, `pasei10` and mother's SEI, `masei10`, with respondent income, `conrinc`. The 95% bootstrapped confidence interval for the slope of father's SEI falls between 80.2 and 400 and for mother's SEI between 72 and 386, illustrating a 95% confidence that for each unit of increase in father's SEI, the respondent's income increases between $80.2 and $400 on average, and for mother's SEI an increase between $72 and $386 on average. Additionally, both intervals does not include 0, suggesting a statistically significant positive relationship between father's SEI and mother's SEI on respondent's income. 
+
+```{r 2.41}
+set.seed(111)
+boot_slope_pasei.df <- gss_subset_train %>%
+                        specify(explanatory = pasei10, response = conrinc ) %>%
+                           generate(reps = 1000, type = "bootstrap") %>%
+                           calculate(stat = "slope") 
+
+boot_slope_masei.df <- gss_subset_train %>%
+                        specify(explanatory = masei10, response = conrinc ) %>%
+                           generate(reps = 1000, type = "bootstrap") %>%
+                           calculate(stat = "slope") 
+```
+
+```{r 2.42, fig.height = 3, fig.width = 6,  fig.align = "center"}
+pasei_binw = (510.4-9.73)/log2(1000)
+pasei_boot <- ggplot(data = boot_slope_pasei.df,
+       mapping = aes(x = stat)) +
+  geom_histogram(binwidth = pasei_binw) +
+  labs(title = "Bootstrapped Father's SEI",
+       x = "Bootstrapped Slope Estimates of Father's SEI")
+
+masei_binw = (476.7+29.68)/log2(1000)
+masei_boot <- ggplot(data = boot_slope_masei.df,
+       mapping = aes(x = stat)) +
+  geom_histogram(binwidth = masei_binw) +
+  labs(title = "Bootstrapped Mother's SEI",
+       x = "Bootstrapped Slope Estimates of Mother's SEI")
+
+pasei_boot + masei_boot
+```
+
+```{r 2.43}
+boot_slope_pasei.df %>%
+  summarise(lower = quantile(stat, 0.025),
+  upper = quantile(stat, 0.975))
+
+boot_slope_masei.df %>%
+  summarise(lower = quantile(stat, 0.025),
+  upper = quantile(stat, 0.975))
+```
+
+To compare the differences between respondent income grouped by childhood financial background, this model compares summary statistics between three groups of respondents' family income at 16 years `Incom16` and the respondents' current incomes. From the produced boxplots, individuals reporting average and above average levels of family income at age 16 were shown to be correlated with higher median income values. Surprisingly, the median respondent income of those reported to have an average family income at 16 was higher than that of those with an above average family income. 
+
+```{r 2.44, fig.height = 3, fig.width = 7,  fig.align = "center"}
+set.seed(111)
+
+ggplot(data = filtered, 
+       mapping = aes(x = Incom16, y = conrinc, fill = Incom16)) +
+         geom_boxplot() +
+  labs(title = "Family Income at 16 Years and Respondent Current Income", 
+       x = "Family Income at 16 Years", y = "Respondent Income") +
+  scale_color_viridis_d()
+```
+
+
+```{r 4 rsq}
+
+model4 <- lm(conrinc ~ pasei10 + masei10 + Incom16, data = gss_subset_train)
+tidy(model4)
+  
+model4_rsq <- glance(model4) %>%
+  select(adj.r.squared) %>%
+  pull()
+```
+
+Equation for Linear Model: conrinc_model = 21540 + 155 * pasei10 + 157 * masei10 + 1612 * Incom16Average -2338 * Incom16BelowAverage
+
+```{r 4rmse}
+model4_pred <- augment(model4, newdata = gss_subset_test)
+model4_rmse <- model4_pred %>%
+  rmse(truth = conrinc, estimate = .fitted) %>%
+  pull()
+```
+
+### Lists of models
+
+| Model                  |  Training (adj) Rsquare| Testing RMSE
+|:-----------------------|:----------------------:| :---------:
+| Model proposed by Lily  |`r round(100*model1_rsq, 2)`%| 31420.78
+| Model proposed by Katie |`r round(100*model2_rsq, 2)`%| 33319.47
+| Model proposed by Qintong |`r round(100*model3_rsq, 2)`%| 32914.99
+| Model proposed by Chloe | `r round(100*model4_rsq, 2)`%| 36181.59
+
+## Section 3 - Results 
+
+We chose Lily’s model because it has the highest adjusted R-squared, indicating it explains the most variation in income, and the lowest testing RMSE, suggesting the best predictive accuracy on new data. While Qintong’s model is also comparable in R-squared and RMSE and is simpler to interpret, we observed that fitting it on the full dataset caused some coefficient signs to reverse, likely due to skewness in the response variable, which suggests the model may be less reliable.
+
+```{r best-model-fit}
+model_best <- lm(conrinc ~ sei10 + children *  Sex, data = filtered)
+tidy(model_best) %>% select(term, estimate)
+```
+
+Fitting the model on our full dataset, we got the following equation for predicting personal income:
+
+corinc_hat = −3054.91+ 633.93∗sei10 + 1512.21∗(1–2children) + 1190.17∗(3+children) + 792.27∗(Male) + 23400.88∗(1–2children∗Male) + 12654.32∗(3+children∗Male)
+
+In determining the effect of social and demographic influences on income, we found that the model focusing on the interaction of gender expectations and caregiving responsibilities — particularly from the variables detailing the number of `children` and `sex` of an individual — was able to best explain variations in income across the country. 
+
+Our model starts at a baseline of -3054.91, as the predicted income for a female respondent with no children and a socioeconomic index score of 0, which is not meaningful alone because a 0 index score and a negative number for income are impossible. 
+
+Regardless of the gender of the respondent and the number of children the respondent has had, a 1 point increase in socioeconomic index is associated with an increase of income by 633.93 US dollars — holding all other variables constant. Compared to people with no children, female respondents with 1-2 children are expected to have an increase of income by 1512.21 dollars, and female respondents with more than 3 children are expected to have an increase in income by 1190.17 dollars.
+
+Regardless of the socioeconomic index, the income of male respondents with no children is expected to be 792.27 dollars higher than that of female respondents with no children. Male respondents with 1-2 children are associated with an additional increase in income of $23,400.88, which comes on top of the general male income premium and the general effect of having 1-2 children; additionally, male respondents with 3 or more children are associated with an additional increase in income of $12,654.32 on top of the general male income premium and the general effect of having 3+ children.
+
+This model shows that socioeconomic index strongly predicts income and fatherhood, particularly having 1-2 children, is associated with a higher income compared to motherhood. The disproportionate income increase for males with children reflects underlying societal pressures, supporting prior research that gender expectations and caregiving responsibilities may limit women’s labor force participation and access to higher-paying jobs.
+
+The following graphs plot the equation of the model, showing the interaction effect of respondents' sex on their income group by the number of children they have, while controlling the socioeconomic index:
+
+```{r best-model-plot, fig.height=8, fig.width=16, fig.align='center'}
+no_child <- ggplot(data = filtered,
+       mapping = aes(x = sei10, y = conrinc, color = Sex)) +
+  geom_point(alpha = 0.6) + 
+  geom_abline(slope = 633.93, intercept = -3054.91, color = "red") +
+  geom_abline(slope = 633.93, intercept = -2262.64, color = "turquoise") +
+  labs(title = "Income vs. SEI by Sex",
+       subtitle = "Lines plot for no child",
+       y = "Income ($)",
+       x = "Socioeconomic Index")
+
+one_two_child <- ggplot(data = filtered,
+       mapping = aes(x = sei10, y = conrinc, color = Sex)) +
+  geom_point(alpha = 0.6) + 
+  geom_abline(slope = 633.93, intercept = -1542.7, color = "red") +
+  geom_abline(slope = 633.93, intercept = 22650.45, color = "turquoise") + 
+  labs(title = "Income vs. SEI by Sex",
+       subtitle = "Lines plot for 1-2 child",
+       y = "Income ($)",
+       x = "Socioeconomic Index")
+
+three_child <- ggplot(data = filtered,
+       mapping = aes(x = sei10, y = conrinc, color = Sex)) +
+  geom_point(alpha = 0.6) + 
+  geom_abline(slope = 633.93, intercept = -1864.74, color = "red") +
+  geom_abline(slope = 633.93, intercept = 11581.85, color = "turquoise")+
+  labs(title = "Income vs. SEI by Sex",
+       subtitle = "Lines plot for 3 or more child",
+       y = "Income ($)",
+       x = "Socioeconomic Index")
+
+no_child + one_two_child + three_child
+```
+
+
+
+## Bibliography
+
+Arulampalam, Wiji. "Is Unemployment Really Scarring? Effects of Unemployment Experiences on Wages." The Economic Journal, vol. 111, no. 475, 2001, pp. F585–F606.
+
+Becker, Gary S. Human Capital: A Theoretical and Empirical Analysis, with Special Reference to Education. National Bureau of Economic Research, 1964.
+
+Bureau of Labor Statistics. Occupational Outlook Handbook. U.S. Department of Labor, 2023, www.bls.gov/ooh/.
+
+Davern, Michael; Bautista, Rene; Freese, Jeremy; Herd, Pamela; and Morgan, Stephen L.; General Social Survey 1972-2024. [Machine-readable data file]. Principal Investigator, Michael Davern; Co-Principal Investigators, Rene Bautista, Jeremy Freese, Pamela Herd, and Stephen L. Morgan. Sponsored by National Science Foundation. NORC ed. Chicago: NORC, 2024: NORC at the University of Chicago [producer and distributor]. Data accessed from the Survey Documentation and Analysis archive at https://sda.berkeley.edu/sdaweb/analysis/?dataset=gss22rel2.
+
+Duncan, G.J. and Magnuson, K. (2012), Socioeconomic status and cognitive functioning: moving from correlation to causation. WIREs Cogn Sci, 3: 377-386. https://doi.org/10.1002/wcs.1176.
+
+Suglia, Shakira F et al. “Child socioeconomic status, childhood adversity and adult socioeconomic status in a nationally representative sample of young adults.” SSM - population health vol. 18 101094. 5 May. 2022, doi:10.1016/j.ssmph.2022.101094 
